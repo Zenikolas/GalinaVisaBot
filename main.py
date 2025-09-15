@@ -73,11 +73,24 @@ class PatternManager:
         return self.patterns.copy()
     
     def get_compiled_patterns(self) -> list:
-        """Get compiled regex patterns."""
+        """Get compiled regex patterns for flexible country/city matching."""
         patterns = []
         for pattern in self.patterns:
-            escaped_pattern = re.escape(pattern)
-            compiled_pattern = re.compile(escaped_pattern, re.IGNORECASE)
+            # Parse pattern as "country,city" or handle existing "country · city" format
+            if ',' in pattern:
+                country, city = [p.strip() for p in pattern.split(',', 1)]
+            elif ' · ' in pattern or '\u00b7' in pattern:
+                # Handle existing patterns with middle dot
+                normalized = pattern.replace('\u00b7', ' · ')
+                country, city = [p.strip() for p in normalized.split(' · ', 1)]
+            else:
+                # Skip malformed patterns
+                continue
+            
+            # Create flexible regex that finds country and city anywhere in the message
+            # Matches: "🇨🇾 Cyprus · London", "France - London", "Cyprus, London", etc.
+            flexible_pattern = rf'(?=.*\b{re.escape(country)}\b)(?=.*\b{re.escape(city)}\b)'
+            compiled_pattern = re.compile(flexible_pattern, re.IGNORECASE | re.DOTALL)
             patterns.append(compiled_pattern)
         return patterns
 
@@ -176,8 +189,8 @@ class AppointmentMonitor:
                 f"**Active Patterns:** {len(patterns)}\n\n"
                 f"**Commands:**\n"
                 f"• `/list` - Show current patterns\n"
-                f"• `/add Country · City` - Add new pattern\n"
-                f"• `/remove Country · City` - Remove pattern\n"
+                f"• `/add Country City` - Add new pattern (e.g., `/add France London`)\n"
+                f"• `/remove Country City` - Remove pattern\n"
                 f"• `/status` - Show monitor status\n\n"
                 f"**Current Patterns:**\n"
             )
@@ -201,29 +214,35 @@ class AppointmentMonitor:
             
             await event.reply(message)
         
-        @self.bot_client.on(events.NewMessage(pattern=r'/add (.+)'))
+        @self.bot_client.on(events.NewMessage(pattern=r'/add (.+) (.+)'))
         async def add_pattern(event):
             if event.sender_id != self.your_chat_id:
                 return
             
-            pattern = event.pattern_match.group(1).strip()
+            country = event.pattern_match.group(1).strip()
+            city = event.pattern_match.group(2).strip()
+            pattern = f"{country},{city}"
+            
             if self.pattern_manager.add_pattern(pattern):
-                await event.reply(f"✅ Added pattern: `{pattern}`")
+                await event.reply(f"✅ Added pattern: `{country}` in `{city}`")
                 logger.info(f"Pattern added: {pattern}")
             else:
-                await event.reply(f"❌ Pattern already exists: `{pattern}`")
+                await event.reply(f"❌ Pattern already exists: `{country}` in `{city}`")
         
-        @self.bot_client.on(events.NewMessage(pattern=r'/remove (.+)'))
+        @self.bot_client.on(events.NewMessage(pattern=r'/remove (.+) (.+)'))
         async def remove_pattern(event):
             if event.sender_id != self.your_chat_id:
                 return
             
-            pattern = event.pattern_match.group(1).strip()
+            country = event.pattern_match.group(1).strip()
+            city = event.pattern_match.group(2).strip()
+            pattern = f"{country},{city}"
+            
             if self.pattern_manager.remove_pattern(pattern):
-                await event.reply(f"✅ Removed pattern: `{pattern}`")
+                await event.reply(f"✅ Removed pattern: `{country}` in `{city}`")
                 logger.info(f"Pattern removed: {pattern}")
             else:
-                await event.reply(f"❌ Pattern not found: `{pattern}`")
+                await event.reply(f"❌ Pattern not found: `{country}` in `{city}`")
         
         @self.bot_client.on(events.NewMessage(pattern='/status'))
         async def status_command(event):
